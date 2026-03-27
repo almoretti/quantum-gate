@@ -16,6 +16,7 @@ export interface LoginRecord {
 
 interface StoreData {
   services: Record<string, ServiceEntry>;
+  admins: string[];
   recentLogins: LoginRecord[];
 }
 
@@ -23,7 +24,7 @@ const DATA_DIR = path.resolve(process.cwd(), "data");
 const STORE_FILE = path.join(DATA_DIR, "services.json");
 const MAX_LOGINS = 100;
 
-let data: StoreData = { services: {}, recentLogins: [] };
+let data: StoreData = { services: {}, admins: [], recentLogins: [] };
 
 function load() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -90,6 +91,31 @@ export function removeService(host: string): boolean {
 export function updateServiceName(host: string, name: string): boolean {
   if (!data.services[host]) return false;
   data.services[host].name = name;
+  persist();
+  return true;
+}
+
+// --- Admins ---
+
+export function isAdmin(email: string): boolean {
+  return data.admins.includes(email);
+}
+
+export function getAdmins(): string[] {
+  return [...data.admins];
+}
+
+export function addAdmin(email: string): boolean {
+  if (data.admins.includes(email)) return false;
+  data.admins.push(email);
+  persist();
+  return true;
+}
+
+export function removeAdmin(email: string): boolean {
+  const idx = data.admins.indexOf(email);
+  if (idx === -1) return false;
+  data.admins.splice(idx, 1);
   persist();
   return true;
 }
