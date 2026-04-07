@@ -34,7 +34,7 @@ a { display:inline-block; padding:10px 24px; border-radius:8px; text-decoration:
 <div class="card">
   <h2>Access Denied</h2>
   <p>Signed in as <span class="email">${esc(email)}</span><br>You don't have admin access. Contact an administrator to request access.</p>
-  <a class="back" href="/">Home</a>
+  <a class="back" href="https://marketing.qih-tech.com">Home</a>
   <a class="logout" href="/auth/logout">Sign Out</a>
 </div>
 </body></html>`;
