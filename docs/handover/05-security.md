@@ -131,6 +131,7 @@ coolify app logs {quantum-gate-uuid} -n 50
 | To change admin settings | Compromise an admin's Google account |
 | To forge session cookies | Know the JWT_SECRET (64-char hex string) |
 | To bypass auth entirely | Remove the Traefik entrypoint middleware line (requires server access) |
+| To access `/api/*` paths | No auth proxy check — these paths are exempt. Backend services must implement their own auth (e.g., bearer tokens) |
 | To access the data file | SSH access to the VPS |
 
 ## Rotating the JWT Secret

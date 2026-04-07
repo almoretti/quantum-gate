@@ -56,6 +56,8 @@ The most critical endpoint — called by Traefik on every single request.
 
 The `AUTH_HOST` constant is extracted from `SERVER_URL` at module load time. This is compared against `X-Forwarded-Host` to bypass auth for the login page itself.
 
+**API path exemption:** Requests where `X-Forwarded-URI` starts with `/api/` are passed through without auth. This allows backend services (e.g., Coolify) to expose APIs with their own authentication (bearer tokens) without being intercepted by the auth proxy. Added to support CI/CD deploy triggers from GitHub Actions.
+
 Auto-discovery: when an unknown host is seen, `registerHost()` adds it to the store with `protected: true`. This triggers a disk write (JSON persistence) but only once per new hostname.
 
 ## Admin: `src/admin.ts`
