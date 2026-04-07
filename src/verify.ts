@@ -17,6 +17,11 @@ export function setupVerifyRoute(app: Hono) {
       return c.text("OK", 200);
     }
 
+    // Pass through API paths that have their own auth (e.g., Coolify API with bearer tokens)
+    if (uri.startsWith("/api/")) {
+      return c.text("OK", 200);
+    }
+
     // Check if host is known and its protection status
     const status = isHostProtected(host);
 
