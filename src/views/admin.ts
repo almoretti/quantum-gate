@@ -1,4 +1,4 @@
-export function adminPageHtml(email: string, isAdmin: boolean): string {
+export function adminPageHtml(email: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -46,6 +46,9 @@ export function adminPageHtml(email: string, isAdmin: boolean): string {
     }
     .badge-protected { background: #e8f4ff; color: #0086ff; }
     .badge-open { background: #e8f8f0; color: #10b395; }
+    .badge-super { background: #fef3c7; color: #d97706; }
+    .badge-admin { background: #ede9fe; color: #7c3aed; }
+    .badge-user { background: #f1f5f9; color: #64748b; }
     .toggle-btn {
       padding: 6px 14px; border-radius: 100px; border: 1px solid #e2e8f0;
       background: white; font-family: inherit; font-size: 0.75rem; font-weight: 600;
@@ -95,21 +98,21 @@ export function adminPageHtml(email: string, isAdmin: boolean): string {
         <h2>Services</h2>
       </div>
       <div id="services-table"></div>
-      ${isAdmin ? `<div class="add-form">
+      <div class="add-form">
         <input id="add-host" placeholder="subdomain.marketing.qih-tech.com" />
         <input id="add-name" placeholder="Display name" style="max-width:160px;" />
         <button onclick="addService()">Add</button>
-      </div>` : ''}
+      </div>
     </div>
 
-    ${isAdmin ? `<div class="section">
-      <div class="section-header"><h2>Admins</h2></div>
-      <div id="admins-table"></div>
+    <div class="section">
+      <div class="section-header"><h2>Users</h2></div>
+      <div id="users-table"></div>
       <div class="add-form">
         <input id="add-admin-email" placeholder="user@quantum.media" />
-        <button onclick="addAdminUser()">Add Admin</button>
+        <button onclick="addAdminByEmail()">Add Admin</button>
       </div>
-    </div>` : ''}
+    </div>
 
     <div class="section">
       <div class="section-header"><h2>Recent Logins</h2></div>
@@ -118,7 +121,6 @@ export function adminPageHtml(email: string, isAdmin: boolean): string {
   </div>
 
   <script>
-    const IS_ADMIN = ${isAdmin};
     function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
     function timeAgo(iso) {
       const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -142,27 +144,87 @@ export function adminPageHtml(email: string, isAdmin: boolean): string {
         return;
       }
 
-      let html = '<table><tr><th>Name</th><th>Hostname</th><th>Status</th><th>Discovered</th>' + (IS_ADMIN ? '<th>Actions</th>' : '') + '</tr>';
+      let html = '<table><tr><th>Name</th><th>Hostname</th><th>Status</th><th>Discovered</th><th>Actions</th></tr>';
       for (const [host, svc] of entries.sort((a,b) => a[1].name.localeCompare(b[1].name))) {
         const badge = svc.protected
           ? '<span class="badge badge-protected">Protected</span>'
           : '<span class="badge badge-open">Open</span>';
         const toggleLabel = svc.protected ? 'Make Open' : 'Protect';
         html += '<tr>'
-          + (IS_ADMIN
-            ? '<td><input class="name-input" value="' + esc(svc.name) + '" onchange="rename(\\'' + esc(host) + '\\',this.value)" /></td>'
-            : '<td>' + esc(svc.name) + '</td>')
+          + '<td><input class="name-input" value="' + esc(svc.name) + '" onchange="rename(\\'' + esc(host) + '\\',this.value)" /></td>'
           + '<td style="font-size:0.8rem;color:#5a6268;">' + esc(host) + '</td>'
           + '<td>' + badge + '</td>'
           + '<td style="font-size:0.8rem;color:#5a6268;">' + timeAgo(svc.discoveredAt) + '</td>'
-          + (IS_ADMIN ? '<td>'
-            + '<button class="toggle-btn" onclick="toggle(\\'' + esc(host) + '\\',' + !svc.protected + ')">' + toggleLabel + '</button> '
-            + '<button class="toggle-btn danger" onclick="remove(\\'' + esc(host) + '\\')">Remove</button>'
-            + '</td>' : '')
+          + '<td>'
+          + '<button class="toggle-btn" onclick="toggle(\\'' + esc(host) + '\\',' + !svc.protected + ')">' + toggleLabel + '</button> '
+          + '<button class="toggle-btn danger" onclick="remove(\\'' + esc(host) + '\\')">Remove</button>'
+          + '</td>'
           + '</tr>';
       }
       html += '</table>';
       document.getElementById('services-table').innerHTML = html;
+    }
+
+    async function loadUsers() {
+      const [usersRes, adminsRes] = await Promise.all([
+        fetch('/api/users'),
+        fetch('/api/admins')
+      ]);
+      const users = await usersRes.json();
+      const adminData = await adminsRes.json();
+      const adminSet = new Set([adminData.superAdmin, ...adminData.admins]);
+
+      const entries = Object.values(users).sort((a, b) =>
+        new Date(b.lastLogin).getTime() - new Date(a.lastLogin).getTime()
+      );
+
+      // Also include admins who haven't logged in yet
+      const allEmails = new Set(entries.map(u => u.email));
+      const extraAdmins = adminData.admins.filter(e => !allEmails.has(e));
+
+      if (!entries.length && !extraAdmins.length) {
+        document.getElementById('users-table').innerHTML = '<div class="empty">No users have logged in yet.</div>';
+        return;
+      }
+
+      let html = '<table><tr><th>Email</th><th>Name</th><th>Last Login</th><th>Logins</th><th>Role</th><th>Actions</th></tr>';
+
+      for (const user of entries) {
+        const isSuperAdmin = user.email === adminData.superAdmin;
+        const isAdm = adminSet.has(user.email);
+        const roleBadge = isSuperAdmin
+          ? '<span class="badge badge-super">Super Admin</span>'
+          : isAdm
+            ? '<span class="badge badge-admin">Admin</span>'
+            : '<span class="badge badge-user">User</span>';
+        const actions = isSuperAdmin
+          ? ''
+          : isAdm
+            ? '<button class="toggle-btn danger" onclick="demoteUser(\\'' + esc(user.email) + '\\')">Remove Admin</button>'
+            : '<button class="toggle-btn" onclick="promoteUser(\\'' + esc(user.email) + '\\')">Make Admin</button>';
+        html += '<tr>'
+          + '<td>' + esc(user.email) + '</td>'
+          + '<td>' + esc(user.name) + '</td>'
+          + '<td>' + timeAgo(user.lastLogin) + '</td>'
+          + '<td>' + user.loginCount + '</td>'
+          + '<td>' + roleBadge + '</td>'
+          + '<td>' + actions + '</td>'
+          + '</tr>';
+      }
+
+      for (const adminEmail of extraAdmins) {
+        html += '<tr>'
+          + '<td>' + esc(adminEmail) + '</td>'
+          + '<td style="color:#5a6268;">—</td>'
+          + '<td style="color:#5a6268;">Never</td>'
+          + '<td>0</td>'
+          + '<td><span class="badge badge-admin">Admin</span></td>'
+          + '<td><button class="toggle-btn danger" onclick="demoteUser(\\'' + esc(adminEmail) + '\\')">Remove Admin</button></td>'
+          + '</tr>';
+      }
+
+      html += '</table>';
+      document.getElementById('users-table').innerHTML = html;
     }
 
     async function loadLogins() {
@@ -214,43 +276,35 @@ export function adminPageHtml(email: string, isAdmin: boolean): string {
       loadServices();
     }
 
-    async function loadAdmins() {
-      if (!IS_ADMIN) return;
-      const el = document.getElementById('admins-table');
-      if (!el) return;
-      const res = await fetch('/api/admins');
-      const data = await res.json();
-      let html = '<table><tr><th>Email</th><th>Role</th><th>Actions</th></tr>';
-      html += '<tr><td>' + esc(data.superAdmin) + '</td><td><span class="badge badge-protected">Super Admin</span></td><td></td></tr>';
-      for (const email of data.admins) {
-        html += '<tr><td>' + esc(email) + '</td><td><span class="badge badge-open">Admin</span></td>'
-          + '<td><button class="toggle-btn danger" onclick="removeAdminUser(\\'' + esc(email) + '\\')">Remove</button></td></tr>';
-      }
-      html += '</table>';
-      el.innerHTML = html;
-    }
-
-    async function addAdminUser() {
-      const input = document.getElementById('add-admin-email');
-      const email = input.value.trim();
-      if (!email) return;
+    async function promoteUser(userEmail) {
       await fetch('/api/admins', {
         method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ email })
+        body: JSON.stringify({ email: userEmail })
       });
-      input.value = '';
-      loadAdmins();
+      loadUsers();
     }
 
-    async function removeAdminUser(email) {
-      if (!confirm('Remove admin: ' + email + '?')) return;
-      await fetch('/api/admins/' + encodeURIComponent(email), { method: 'DELETE' });
-      loadAdmins();
+    async function demoteUser(userEmail) {
+      if (!confirm('Remove admin role from ' + userEmail + '?')) return;
+      await fetch('/api/admins/' + encodeURIComponent(userEmail), { method: 'DELETE' });
+      loadUsers();
+    }
+
+    async function addAdminByEmail() {
+      const input = document.getElementById('add-admin-email');
+      const adminEmail = input.value.trim();
+      if (!adminEmail) return;
+      await fetch('/api/admins', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ email: adminEmail })
+      });
+      input.value = '';
+      loadUsers();
     }
 
     loadServices();
+    loadUsers();
     loadLogins();
-    loadAdmins();
   </script>
 </body>
 </html>`;

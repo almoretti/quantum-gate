@@ -1,66 +1,96 @@
 import { Hono } from "hono";
+import type { MiddlewareHandler } from "hono";
 import { CONFIG } from "./config.js";
 import { parseSession } from "./auth.js";
-import { getServices, setProtection, addService, removeService, updateServiceName, getRecentLogins, isAdmin, getAdmins, addAdmin, removeAdmin } from "./store.js";
+import { getServices, setProtection, addService, removeService, updateServiceName, getRecentLogins, isAdmin, getAdmins, addAdmin, removeAdmin, getUsers } from "./store.js";
 import { auditLog } from "./security.js";
 import { adminPageHtml } from "./views/admin.js";
 
-let currentUser = { email: "", isAdmin: false };
+type Env = { Variables: { userEmail: string } };
 
-// Any authenticated user can view the dashboard
-async function requireAuth(c: any, next: () => Promise<void>) {
+function esc(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function accessDeniedHtml(email: string): string {
+  return `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Access Denied — Quantum Gate</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Inter',sans-serif; background:#f8fafe; display:flex; justify-content:center; align-items:center; min-height:100vh; }
+.card { text-align:center; padding:48px; background:white; border-radius:16px; box-shadow:0 8px 32px rgba(0,0,0,0.08); max-width:420px; }
+h2 { color:#3d4449; margin-bottom:8px; }
+p { color:#5a6268; margin-bottom:24px; line-height:1.6; }
+.email { font-weight:600; color:#3d4449; }
+a { display:inline-block; padding:10px 24px; border-radius:8px; text-decoration:none; font-weight:600; font-size:0.9rem; }
+.back { background:#0086ff; color:white; }
+.back:hover { background:#0070d6; }
+.logout { color:#5a6268; margin-left:12px; }
+</style>
+</head><body>
+<div class="card">
+  <h2>Access Denied</h2>
+  <p>Signed in as <span class="email">${esc(email)}</span><br>You don't have admin access. Contact an administrator to request access.</p>
+  <a class="back" href="/">Home</a>
+  <a class="logout" href="/auth/logout">Sign Out</a>
+</div>
+</body></html>`;
+}
+
+// Single middleware: authenticate + require admin role
+// User email is stored per-request on the context (not a shared variable)
+const requireAdmin: MiddlewareHandler<Env> = async (c, next) => {
   const session = await parseSession(c);
   if (!session) {
+    if (c.req.path.startsWith("/api/")) {
+      return c.json({ error: "Authentication required" }, 401);
+    }
     return c.redirect(`/auth/login?redirect=/admin`);
   }
-  currentUser = {
-    email: session.email,
-    isAdmin: session.email === CONFIG.SUPER_ADMIN || isAdmin(session.email),
-  };
-  await next();
-}
-
-// Only admins can make changes
-async function requireAdminRole(c: any, next: () => Promise<void>) {
-  if (!currentUser.isAdmin) {
-    return c.json({ error: "Admin access required" }, 403);
+  if (session.email !== CONFIG.SUPER_ADMIN && !isAdmin(session.email)) {
+    if (c.req.path.startsWith("/api/")) {
+      return c.json({ error: "Admin access required" }, 403);
+    }
+    return c.html(accessDeniedHtml(session.email), 403);
   }
+  c.set("userEmail", session.email);
   await next();
-}
+};
 
 export function setupAdminRoutes(app: Hono) {
+  const router = app as unknown as Hono<Env>;
 
-  // Dashboard — viewable by all authenticated users
-  app.get("/admin", requireAuth, (c) => {
-    return c.html(adminPageHtml(currentUser.email, currentUser.isAdmin));
+  // Dashboard — admin-only
+  router.get("/admin", requireAdmin, (c) => {
+    return c.html(adminPageHtml(c.get("userEmail")));
   });
 
-  // API: List services (read-only, all users)
-  app.get("/api/services", requireAuth, (c) => {
-    return c.json(getServices());
-  });
+  // --- Read endpoints (admin-only) ---
 
-  // API: Recent logins (read-only, all users)
-  app.get("/api/sessions", requireAuth, (c) => {
-    return c.json(getRecentLogins());
-  });
+  router.get("/api/services", requireAdmin, (c) => c.json(getServices()));
 
-  // API: List admins (read-only, all users)
-  app.get("/api/admins", requireAuth, (c) => {
+  router.get("/api/sessions", requireAdmin, (c) => c.json(getRecentLogins()));
+
+  router.get("/api/admins", requireAdmin, (c) => {
     return c.json({ superAdmin: CONFIG.SUPER_ADMIN, admins: getAdmins() });
   });
 
-  // --- Write operations: admin-only ---
+  router.get("/api/users", requireAdmin, (c) => c.json(getUsers()));
 
-  // API: Update service (toggle protection or rename)
-  app.patch("/api/services/:host", requireAuth, requireAdminRole, async (c) => {
+  // --- Write endpoints (admin-only) ---
+
+  router.patch("/api/services/:host", requireAdmin, async (c) => {
     const host = c.req.param("host");
+    const email = c.get("userEmail");
     const body = await c.req.json<{ protected?: boolean; name?: string }>();
 
     if (typeof body.protected === "boolean") {
       const ok = setProtection(host, body.protected);
       if (!ok) return c.json({ error: "Service not found" }, 404);
-      auditLog("service_protection_changed", { host, protected: body.protected, by: currentUser.email });
+      auditLog("service_protection_changed", { host, protected: body.protected, by: email });
     }
 
     if (typeof body.name === "string") {
@@ -71,41 +101,41 @@ export function setupAdminRoutes(app: Hono) {
     return c.json({ ok: true });
   });
 
-  // API: Add service
-  app.post("/api/services", requireAuth, requireAdminRole, async (c) => {
+  router.post("/api/services", requireAdmin, async (c) => {
+    const email = c.get("userEmail");
     const body = await c.req.json<{ host: string; name: string; protected: boolean }>();
     if (!body.host) return c.json({ error: "host is required" }, 400);
     addService(body.host, body.name || body.host.split(".")[0], body.protected ?? true);
-    auditLog("service_added", { host: body.host, by: currentUser.email });
+    auditLog("service_added", { host: body.host, by: email });
     return c.json({ ok: true }, 201);
   });
 
-  // API: Remove service
-  app.delete("/api/services/:host", requireAuth, requireAdminRole, async (c) => {
+  router.delete("/api/services/:host", requireAdmin, async (c) => {
     const host = c.req.param("host");
+    const email = c.get("userEmail");
     const ok = removeService(host);
     if (!ok) return c.json({ error: "Service not found" }, 404);
-    auditLog("service_removed", { host, by: currentUser.email });
+    auditLog("service_removed", { host, by: email });
     return c.json({ ok: true });
   });
 
-  // API: Add admin
-  app.post("/api/admins", requireAuth, requireAdminRole, async (c) => {
+  router.post("/api/admins", requireAdmin, async (c) => {
+    const email = c.get("userEmail");
     const body = await c.req.json<{ email: string }>();
     if (!body.email) return c.json({ error: "email is required" }, 400);
     const ok = addAdmin(body.email);
     if (!ok) return c.json({ error: "Already an admin" }, 409);
-    auditLog("admin_added", { email: body.email, by: currentUser.email });
+    auditLog("admin_added", { email: body.email, by: email });
     return c.json({ ok: true }, 201);
   });
 
-  // API: Remove admin
-  app.delete("/api/admins/:email", requireAuth, requireAdminRole, async (c) => {
-    const email = c.req.param("email");
-    if (email === CONFIG.SUPER_ADMIN) return c.json({ error: "Cannot remove super admin" }, 403);
-    const ok = removeAdmin(email);
+  router.delete("/api/admins/:email", requireAdmin, async (c) => {
+    const targetEmail = c.req.param("email");
+    const email = c.get("userEmail");
+    if (targetEmail === CONFIG.SUPER_ADMIN) return c.json({ error: "Cannot remove super admin" }, 403);
+    const ok = removeAdmin(targetEmail);
     if (!ok) return c.json({ error: "Not an admin" }, 404);
-    auditLog("admin_removed", { email, by: currentUser.email });
+    auditLog("admin_removed", { email: targetEmail, by: email });
     return c.json({ ok: true });
   });
 }

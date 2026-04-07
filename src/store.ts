@@ -14,9 +14,17 @@ export interface LoginRecord {
   ip: string;
 }
 
+export interface UserRecord {
+  email: string;
+  name: string;
+  lastLogin: string;
+  loginCount: number;
+}
+
 interface StoreData {
   services: Record<string, ServiceEntry>;
   admins: string[];
+  users: Record<string, UserRecord>;
   recentLogins: LoginRecord[];
 }
 
@@ -24,13 +32,14 @@ const DATA_DIR = path.resolve(process.cwd(), "data");
 const STORE_FILE = path.join(DATA_DIR, "services.json");
 const MAX_LOGINS = 100;
 
-let data: StoreData = { services: {}, admins: [], recentLogins: [] };
+let data: StoreData = { services: {}, admins: [], users: {}, recentLogins: [] };
 
 function load() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
   if (fs.existsSync(STORE_FILE)) {
     try {
-      data = JSON.parse(fs.readFileSync(STORE_FILE, "utf-8"));
+      const raw = JSON.parse(fs.readFileSync(STORE_FILE, "utf-8"));
+      data = { services: {}, admins: [], users: {}, recentLogins: [], ...raw };
     } catch {
       console.error("[store] Failed to parse services.json, starting fresh");
     }
@@ -123,6 +132,16 @@ export function removeAdmin(email: string): boolean {
 // --- Login log ---
 
 export function recordLogin(email: string, name: string, ip: string) {
+  // Update user record
+  const existing = data.users[email];
+  data.users[email] = {
+    email,
+    name,
+    lastLogin: new Date().toISOString(),
+    loginCount: (existing?.loginCount || 0) + 1,
+  };
+
+  // Append to recent logins log
   data.recentLogins.unshift({ email, name, timestamp: new Date().toISOString(), ip });
   if (data.recentLogins.length > MAX_LOGINS) data.recentLogins.length = MAX_LOGINS;
   persist();
@@ -130,4 +149,10 @@ export function recordLogin(email: string, name: string, ip: string) {
 
 export function getRecentLogins(): LoginRecord[] {
   return data.recentLogins;
+}
+
+// --- Users ---
+
+export function getUsers(): Record<string, UserRecord> {
+  return { ...data.users };
 }
