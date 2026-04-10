@@ -73,9 +73,9 @@ curl https://auth.marketing.qih-tech.com/health
 
 ### Admin Panel Shows "Access Denied"
 
-**Cause**: Your account isn't in the admin list.
+**Cause**: Your account isn't in the admin list. The admin panel is restricted to admins only — regular authenticated users cannot access it.
 
-**Fix**: The super admin or another admin needs to add you via the admin panel → Admins section → Add Admin. Or update the `SUPER_ADMIN` env var if you need to change the super admin.
+**Fix**: The super admin or another admin needs to add you via the admin panel → Users section → "Make Admin" button (or "Add Admin" by email). Or update the `SUPER_ADMIN` env var in Coolify if you need to change the super admin.
 
 ---
 

@@ -115,13 +115,25 @@ export function adminPageHtml(email: string): string {
     </div>
 
     <div class="section">
+      <div class="section-header"><h2>API Exemptions</h2></div>
+      <p style="padding:12px 20px 0;font-size:0.8rem;color:#5a6268;">Paths matching these rules bypass Quantum Gate auth (for services with their own auth like bearer tokens).</p>
+      <div id="exemptions-table"></div>
+      <div class="add-form">
+        <input id="add-ex-host" placeholder="* or hostname" style="max-width:200px;" />
+        <input id="add-ex-path" placeholder="/api/v1" style="max-width:160px;" />
+        <input id="add-ex-label" placeholder="Label" style="max-width:140px;" />
+        <button onclick="addExemption()">Add</button>
+      </div>
+    </div>
+
+    <div class="section">
       <div class="section-header"><h2>Recent Logins</h2></div>
       <div id="logins-table"></div>
     </div>
   </div>
 
   <script>
-    function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+    function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML.replace(/'/g, '&#39;'); }
     function timeAgo(iso) {
       const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
       if (s < 60) return s + 's ago';
@@ -302,8 +314,54 @@ export function adminPageHtml(email: string): string {
       loadUsers();
     }
 
+    async function loadExemptions() {
+      const res = await fetch('/api/exemptions');
+      const exemptions = await res.json();
+      if (!exemptions.length) {
+        document.getElementById('exemptions-table').innerHTML = '<div class="empty">No API exemptions configured.</div>';
+        return;
+      }
+      let html = '<table><tr><th>Label</th><th>Host</th><th>Path Prefix</th><th>Created</th><th>Actions</th></tr>';
+      for (const ex of exemptions) {
+        html += '<tr>'
+          + '<td>' + esc(ex.label) + '</td>'
+          + '<td style="font-size:0.8rem;color:#5a6268;">' + esc(ex.host) + '</td>'
+          + '<td style="font-size:0.8rem;"><code>' + esc(ex.pathPrefix) + '</code></td>'
+          + '<td style="font-size:0.8rem;color:#5a6268;">' + timeAgo(ex.createdAt) + '</td>'
+          + '<td><button class="toggle-btn danger" onclick="removeExemption(\\'' + esc(ex.host) + '\\',\\'' + esc(ex.pathPrefix) + '\\')">Remove</button></td>'
+          + '</tr>';
+      }
+      html += '</table>';
+      document.getElementById('exemptions-table').innerHTML = html;
+    }
+
+    async function addExemption() {
+      const host = document.getElementById('add-ex-host').value.trim();
+      const pathPrefix = document.getElementById('add-ex-path').value.trim();
+      const label = document.getElementById('add-ex-label').value.trim();
+      if (!host || !pathPrefix) return;
+      await fetch('/api/exemptions', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ host, pathPrefix, label: label || host })
+      });
+      document.getElementById('add-ex-host').value = '';
+      document.getElementById('add-ex-path').value = '';
+      document.getElementById('add-ex-label').value = '';
+      loadExemptions();
+    }
+
+    async function removeExemption(host, pathPrefix) {
+      if (!confirm('Remove exemption ' + host + ' ' + pathPrefix + '?')) return;
+      await fetch('/api/exemptions', {
+        method: 'DELETE', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ host, pathPrefix })
+      });
+      loadExemptions();
+    }
+
     loadServices();
     loadUsers();
+    loadExemptions();
     loadLogins();
   </script>
 </body>
@@ -311,5 +369,10 @@ export function adminPageHtml(email: string): string {
 }
 
 function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }

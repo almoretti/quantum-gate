@@ -1,15 +1,34 @@
-import { Hono } from "hono";
-import type { MiddlewareHandler } from "hono";
-import { CONFIG } from "./config.js";
+import type { Hono, MiddlewareHandler } from "hono";
 import { parseSession } from "./auth.js";
-import { getServices, setProtection, addService, removeService, updateServiceName, getRecentLogins, isAdmin, getAdmins, addAdmin, removeAdmin, getUsers } from "./store.js";
+import { CONFIG } from "./config.js";
 import { auditLog } from "./security.js";
+import {
+  addAdmin,
+  addApiExemption,
+  addService,
+  getAdmins,
+  getApiExemptions,
+  getRecentLogins,
+  getServices,
+  getUsers,
+  isAdmin,
+  removeAdmin,
+  removeApiExemption,
+  removeService,
+  setProtection,
+  updateServiceName,
+} from "./store.js";
 import { adminPageHtml } from "./views/admin.js";
 
 type Env = { Variables: { userEmail: string } };
 
 function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function accessDeniedHtml(email: string): string {
@@ -90,7 +109,11 @@ export function setupAdminRoutes(app: Hono) {
     if (typeof body.protected === "boolean") {
       const ok = setProtection(host, body.protected);
       if (!ok) return c.json({ error: "Service not found" }, 404);
-      auditLog("service_protection_changed", { host, protected: body.protected, by: email });
+      auditLog("service_protection_changed", {
+        host,
+        protected: body.protected,
+        by: email,
+      });
     }
 
     if (typeof body.name === "string") {
@@ -103,9 +126,17 @@ export function setupAdminRoutes(app: Hono) {
 
   router.post("/api/services", requireAdmin, async (c) => {
     const email = c.get("userEmail");
-    const body = await c.req.json<{ host: string; name: string; protected: boolean }>();
+    const body = await c.req.json<{
+      host: string;
+      name: string;
+      protected: boolean;
+    }>();
     if (!body.host) return c.json({ error: "host is required" }, 400);
-    addService(body.host, body.name || body.host.split(".")[0], body.protected ?? true);
+    addService(
+      body.host,
+      body.name || body.host.split(".")[0],
+      body.protected ?? true,
+    );
     auditLog("service_added", { host: body.host, by: email });
     return c.json({ ok: true }, 201);
   });
@@ -123,6 +154,12 @@ export function setupAdminRoutes(app: Hono) {
     const email = c.get("userEmail");
     const body = await c.req.json<{ email: string }>();
     if (!body.email) return c.json({ error: "email is required" }, 400);
+    if (!body.email.endsWith(`@${CONFIG.ALLOWED_DOMAIN}`)) {
+      return c.json(
+        { error: `Only @${CONFIG.ALLOWED_DOMAIN} emails can be admins` },
+        400,
+      );
+    }
     const ok = addAdmin(body.email);
     if (!ok) return c.json({ error: "Already an admin" }, 409);
     auditLog("admin_added", { email: body.email, by: email });
@@ -132,10 +169,57 @@ export function setupAdminRoutes(app: Hono) {
   router.delete("/api/admins/:email", requireAdmin, async (c) => {
     const targetEmail = c.req.param("email");
     const email = c.get("userEmail");
-    if (targetEmail === CONFIG.SUPER_ADMIN) return c.json({ error: "Cannot remove super admin" }, 403);
+    if (targetEmail === CONFIG.SUPER_ADMIN)
+      return c.json({ error: "Cannot remove super admin" }, 403);
     const ok = removeAdmin(targetEmail);
     if (!ok) return c.json({ error: "Not an admin" }, 404);
     auditLog("admin_removed", { email: targetEmail, by: email });
+    return c.json({ ok: true });
+  });
+
+  // --- API Exemptions ---
+
+  router.get("/api/exemptions", requireAdmin, (c) =>
+    c.json(getApiExemptions()),
+  );
+
+  router.post("/api/exemptions", requireAdmin, async (c) => {
+    const email = c.get("userEmail");
+    const body = await c.req.json<{
+      host: string;
+      pathPrefix: string;
+      label: string;
+    }>();
+    if (!body.host || !body.pathPrefix)
+      return c.json({ error: "host and pathPrefix are required" }, 400);
+    if (!body.pathPrefix.startsWith("/"))
+      return c.json({ error: "pathPrefix must start with /" }, 400);
+    const ok = addApiExemption(
+      body.host,
+      body.pathPrefix,
+      body.label || body.host,
+    );
+    if (!ok) return c.json({ error: "Exemption already exists" }, 409);
+    auditLog("api_exemption_added", {
+      host: body.host,
+      pathPrefix: body.pathPrefix,
+      by: email,
+    });
+    return c.json({ ok: true }, 201);
+  });
+
+  router.delete("/api/exemptions", requireAdmin, async (c) => {
+    const email = c.get("userEmail");
+    const body = await c.req.json<{ host: string; pathPrefix: string }>();
+    if (!body.host || !body.pathPrefix)
+      return c.json({ error: "host and pathPrefix are required" }, 400);
+    const ok = removeApiExemption(body.host, body.pathPrefix);
+    if (!ok) return c.json({ error: "Exemption not found" }, 404);
+    auditLog("api_exemption_removed", {
+      host: body.host,
+      pathPrefix: body.pathPrefix,
+      by: email,
+    });
     return c.json({ ok: true });
   });
 }

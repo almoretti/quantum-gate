@@ -99,16 +99,19 @@ All runtime data is stored in `/app/data/services.json` inside the container. Th
 ### What's Stored
 - **Services**: hostname, display name, protection status, discovery timestamp
 - **Admins**: list of admin email addresses
+- **Users**: all users who have logged in (email, name, last login, login count)
 - **Recent logins**: last 100 login events (email, name, IP, timestamp)
 
-### Where on the Host
-In Coolify, the persistent volume maps to:
-```
-/data/coolify/applications/{app-uuid}/
-```
+### Volume Setup in Coolify
+A **named volume** is required — without it, data is lost on container restart.
+
+In Coolify → Quantum Gate → Storage → Add Volume Mount:
+- **Name**: `quantum-gate-data`
+- **Source Path**: leave empty (Docker-managed)
+- **Destination Path**: `/app/data`
 
 ### Backup
-To backup the configuration:
+To backup the configuration, SSH into the server and copy the file from the Docker volume:
 ```bash
-cp /data/coolify/applications/{app-uuid}/services.json ~/services-backup.json
+docker cp $(docker ps -qf "name=quantum-gate"):/app/data/services.json ~/services-backup.json
 ```

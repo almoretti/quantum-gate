@@ -7,9 +7,19 @@ export const securityHeaders: MiddlewareHandler = async (c, next) => {
   c.header("X-XSS-Protection", "1; mode=block");
   c.header("Referrer-Policy", "strict-origin-when-cross-origin");
   c.header("Cache-Control", "no-store");
-  c.header("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'");
-  if (c.req.url.startsWith("https")) {
-    c.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  c.header(
+    "Content-Security-Policy",
+    "default-src 'self'; script-src 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'",
+  );
+  // Use x-forwarded-proto behind reverse proxy, not c.req.url
+  const proto =
+    c.req.header("x-forwarded-proto") ||
+    (c.req.url.startsWith("https") ? "https" : "");
+  if (proto === "https" || CONFIG.isSecure) {
+    c.header(
+      "Strict-Transport-Security",
+      "max-age=31536000; includeSubDomains",
+    );
   }
   await next();
 };
@@ -23,15 +33,30 @@ export const originCheck: MiddlewareHandler = async (c, next) => {
   const origin = c.req.header("origin");
   const referer = c.req.header("referer");
   const allowed = CONFIG.SERVER_URL;
-  if (origin && !origin.startsWith(allowed)) {
-    auditLog("csrf_blocked", { origin, method, path: c.req.path });
-    return c.text("Forbidden", 403);
+
+  if (origin) {
+    if (!origin.startsWith(allowed)) {
+      auditLog("csrf_blocked", { origin, method, path: c.req.path });
+      return c.text("Forbidden", 403);
+    }
+    return next();
   }
-  if (!origin && referer && !referer.startsWith(allowed)) {
-    auditLog("csrf_blocked", { referer, method, path: c.req.path });
-    return c.text("Forbidden", 403);
+
+  if (referer) {
+    if (!referer.startsWith(allowed)) {
+      auditLog("csrf_blocked", { referer, method, path: c.req.path });
+      return c.text("Forbidden", 403);
+    }
+    return next();
   }
-  await next();
+
+  // No Origin AND no Referer — block mutation requests
+  auditLog("csrf_blocked", {
+    reason: "missing_origin_and_referer",
+    method,
+    path: c.req.path,
+  });
+  return c.text("Forbidden", 403);
 };
 
 interface RateEntry {
@@ -54,9 +79,11 @@ export function rateLimit(max: number, windowMs: number): MiddlewareHandler {
   }, 300_000);
 
   return async (c, next) => {
-    const ip = c.req.header("x-forwarded-for")?.split(",")[0]?.trim()
-      || c.req.header("x-real-ip")
-      || "unknown";
+    // Use x-real-ip first (set by trusted proxies), fall back to x-forwarded-for
+    const ip =
+      c.req.header("x-real-ip") ||
+      c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
+      "unknown";
     const now = Date.now();
     const entry = store.get(ip);
 
@@ -73,9 +100,11 @@ export function rateLimit(max: number, windowMs: number): MiddlewareHandler {
 }
 
 export function auditLog(event: string, details: Record<string, unknown> = {}) {
-  console.log(JSON.stringify({
-    timestamp: new Date().toISOString(),
-    event,
-    ...details,
-  }));
+  console.log(
+    JSON.stringify({
+      timestamp: new Date().toISOString(),
+      event,
+      ...details,
+    }),
+  );
 }

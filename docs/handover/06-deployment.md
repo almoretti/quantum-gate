@@ -29,13 +29,18 @@ You can enable auto-deploy in Coolify so it deploys on every push to `main`. Go 
 | Port mapping | `3099:3000` (host:container) |
 | Build pack | Dockerfile |
 | Health check | Disabled (Quantum Gate starts fast, no special health check needed) |
+| NODE_ENV at build time | Must be `development` (or unchecked "Available at Buildtime"). The Dockerfile runs `NODE_ENV=development npm install` to include devDependencies (TypeScript), but if Coolify injects `NODE_ENV=production` at build time it can override this and break the build |
 
 ### Persistent Storage
 
-A **directory mount** maps a host directory to `/app/data` in the container:
-- Host: `/data/coolify/applications/{app-uuid}/`
-- Container: `/app/data/`
-- Contains: `services.json` (the only persistent file)
+A **named volume** maps to `/app/data` in the container. This is critical — without it, all services, users, admins, and login history are lost on container restart.
+
+In Coolify volume mount settings:
+- **Name**: `quantum-gate-data` (or similar, no spaces/special characters)
+- **Source Path**: leave empty (Docker-managed)
+- **Destination Path**: `/app/data`
+
+Contains: `services.json` (services, admins, users, login history)
 
 ### Environment Variables
 
@@ -50,7 +55,12 @@ See [02-configuration.md](./02-configuration.md) for the full list.
 
 ### From CLI
 ```bash
-coolify deploy uuid {quantum-gate-uuid}
+coolify deploy name quantum-gate
+```
+
+Or by UUID:
+```bash
+coolify deploy uuid hs48s0g8go8osgc0c4cwgc48
 ```
 
 ### After Code Changes

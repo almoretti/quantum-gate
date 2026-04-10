@@ -56,24 +56,25 @@ The most critical endpoint — called by Traefik on every single request.
 
 The `AUTH_HOST` constant is extracted from `SERVER_URL` at module load time. This is compared against `X-Forwarded-Host` to bypass auth for the login page itself.
 
-**API path exemption:** Requests where `X-Forwarded-URI` starts with `/api/` are passed through without auth. This allows backend services (e.g., Coolify) to expose APIs with their own authentication (bearer tokens) without being intercepted by the auth proxy. Added to support CI/CD deploy triggers from GitHub Actions.
+**API path exemptions:** Instead of a hardcoded `/api/` bypass, exemptions are now managed via the admin panel and stored in `apiExemptions`. Each exemption has a `host` (or `*` for all) and a `pathPrefix`. The `isApiExempt(host, uri)` function checks at runtime. By default, all `/api/` paths are exempt for backwards compatibility.
 
-Auto-discovery: when an unknown host is seen, `registerHost()` adds it to the store with `protected: true`. This triggers a disk write (JSON persistence) but only once per new hostname.
+Auto-discovery: when an unknown host is seen, `registerHost()` adds it to the store with `protected: true`. This triggers a disk write (JSON persistence) but only once per new hostname. Auto-discovery is capped at 200 to prevent store flooding via crafted headers.
 
 ## Admin: `src/admin.ts`
 
-Two middleware functions:
-- `requireAuth` — checks session, populates `currentUser`
-- `requireAdminRole` — checks `currentUser.isAdmin`
+Single middleware function:
+- `requireAdmin` — checks session, verifies admin role, stores email on Hono's per-request context via `c.set("userEmail", ...)`
 
-**Note on the `currentUser` global:** This is a simple approach that works because Hono processes requests sequentially in Node.js. In a multi-threaded environment, this would need to be request-scoped. For this use case (low traffic admin panel), it's fine.
+All routes (both `/admin` and `/api/*`) require admin access. Non-admins see a styled "Access Denied" page (HTML routes) or get a `403` JSON response (API routes). Non-authenticated users are redirected to login (HTML) or get a `401` JSON (API).
 
 Admin status is determined by:
 ```typescript
-isAdmin: session.email === CONFIG.SUPER_ADMIN || isAdmin(session.email)
+session.email === CONFIG.SUPER_ADMIN || isAdmin(session.email)
 ```
 
 The super admin check is always against the env var — even if someone removes all admins from the JSON file, the super admin still has access.
+
+The admin dashboard includes a **Users section** that shows all users who have logged in, their login count, last login time, and current role. Admins can promote/demote users directly from this table, or manually add an admin by email for users who haven't logged in yet.
 
 ## Data Store: `src/store.ts`
 
@@ -87,11 +88,13 @@ The `persist()` function writes to a `.tmp` file first, then renames. This preve
 {
   services: Record<hostname, { name, protected, discoveredAt }>,
   admins: string[],
-  recentLogins: Array<{ email, name, timestamp, ip }>
+  users: Record<email, { email, name, lastLogin, loginCount }>,
+  recentLogins: Array<{ email, name, timestamp, ip }>,
+  apiExemptions: Array<{ host, pathPrefix, label, createdAt }>
 }
 ```
 
-Login history is capped at 100 entries (oldest are dropped).
+The `users` map is updated on every login (upsert) and provides the data for the admin dashboard's Users section. Login history is capped at 100 entries (oldest are dropped). The `load()` function uses spread with defaults to handle missing fields when migrating from older data files.
 
 ## Security: `src/security.ts`
 
@@ -99,25 +102,26 @@ Login history is capped at 100 entries (oldest are dropped).
 Sets all security headers. The CSP (Content-Security-Policy) allows inline scripts/styles because the admin panel uses inline `<script>` and `<style>` tags. If you move to external scripts, tighten this to remove `'unsafe-inline'`.
 
 ### `originCheck` Middleware
-Only checks POST/PATCH/DELETE methods. Compares the `Origin` (or `Referer`) header against `CONFIG.SERVER_URL`. This prevents a malicious website from making API calls using a user's session cookie.
+Only checks POST/PATCH/DELETE methods. Compares the `Origin` (or `Referer`) header against `CONFIG.SERVER_URL`. Requests with **neither** header are blocked. This prevents a malicious website from making API calls using a user's session cookie.
 
 ### `rateLimit(max, windowMs)` Factory
-Returns a middleware. Each unique `max/windowMs` combination gets its own Map. IPs are extracted from `X-Forwarded-For` (since we're behind Traefik). Cleanup runs every 5 minutes.
+Returns a middleware. Each unique `max/windowMs` combination gets its own Map. IPs are extracted from `X-Real-IP` first (set by trusted proxies), falling back to `X-Forwarded-For`. Cleanup runs every 5 minutes.
 
 ## Views: `src/views/login.ts` and `src/views/admin.ts`
 
 Both are functions that return HTML strings. No template engine — just template literals.
 
-The admin view takes `isAdmin` boolean to conditionally render edit controls. Non-admins see a read-only dashboard. All data loading is done client-side via `fetch()` calls to the API.
+The admin view only takes the user's email (all viewers are admins). It renders the full dashboard with services management, user management (promote/demote), and login history. All data loading is done client-side via `fetch()` calls to the API.
 
-The `esc()` function in `admin.ts` is used for HTML escaping in the server-side template. The client-side `esc()` function uses DOM `textContent` for escaping.
+The `esc()` function in `admin.ts` is used for HTML escaping in the server-side template — it escapes `& < > " '` (including single quotes to prevent JS string breakout in onclick attributes). The client-side `esc()` function uses DOM `textContent` plus single-quote escaping.
 
 ## Extending the System
 
 ### Adding a New API Endpoint
-1. Add the route in `src/admin.ts`
-2. Use `requireAuth` for read-only, add `requireAdminRole` for mutations
-3. Add audit logging for security-relevant actions
+1. Add the route in `src/admin.ts` using the `router` (typed Hono instance)
+2. Apply `requireAdmin` middleware (all admin routes use the same middleware)
+3. Access the user's email via `c.get("userEmail")`
+4. Add audit logging for security-relevant actions
 
 ### Adding a New Config Option
 1. Add to `CONFIG` object in `src/config.ts`

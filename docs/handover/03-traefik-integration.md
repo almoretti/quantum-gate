@@ -74,9 +74,9 @@ When a request comes in:
      Cookie: qm_session=eyJ... (if user has one)
 4. Quantum Gate /verify logic:
    a. Is host "auth.marketing.qih-tech.com"? → 200 OK (bypass)
-   b. Does URI start with "/api/"? → 200 OK (API paths have their own auth, e.g., bearer tokens)
+   b. Is this host+path in the API exemptions list? → 200 OK (managed via admin panel)
    c. Is host registered as "open"? → 200 OK (no auth needed)
-   d. Is host unknown? → Register as protected, continue to step e
+   d. Is host unknown? → Register as protected (up to 200 auto-discoveries), continue to step e
    e. Is qm_session cookie valid? → 200 OK + X-Auth-User header
    f. No valid cookie? → 302 redirect to login page
 5. Traefik acts on response:

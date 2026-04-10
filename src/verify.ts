@@ -1,14 +1,20 @@
-import { Hono } from "hono";
-import { CONFIG } from "./config.js";
-import { isHostProtected, registerHost } from "./store.js";
-import { auditLog } from "./security.js";
+import type { Hono } from "hono";
 import { parseSession } from "./auth.js";
+import { CONFIG } from "./config.js";
+import { auditLog } from "./security.js";
+import { isApiExempt, isHostProtected, registerHost } from "./store.js";
 
-const AUTH_HOST = new URL(CONFIG.SERVER_URL).hostname; // auth.marketing.qih-tech.com
+const AUTH_HOST = new URL(CONFIG.SERVER_URL).hostname;
+
+// Cap auto-discovered hosts to prevent store flooding via crafted headers
+const MAX_AUTO_DISCOVERED = 200;
+let autoDiscoveredCount = 0;
 
 export function setupVerifyRoute(app: Hono) {
   app.get("/verify", async (c) => {
-    const host = (c.req.header("x-forwarded-host") || "").split(":")[0].toLowerCase();
+    const host = (c.req.header("x-forwarded-host") || "")
+      .split(":")[0]
+      .toLowerCase();
     const proto = c.req.header("x-forwarded-proto") || "https";
     const uri = c.req.header("x-forwarded-uri") || "/";
 
@@ -17,18 +23,23 @@ export function setupVerifyRoute(app: Hono) {
       return c.text("OK", 200);
     }
 
-    // Pass through API paths that have their own auth (e.g., Coolify API with bearer tokens)
-    if (uri.startsWith("/api/")) {
+    // Check admin-managed API exemptions (replaces blanket /api/ bypass)
+    if (isApiExempt(host, uri)) {
       return c.text("OK", 200);
     }
 
     // Check if host is known and its protection status
     const status = isHostProtected(host);
 
-    // Unknown host → auto-register as protected
+    // Unknown host → auto-register as protected (with cap to prevent abuse)
     if (!status.known && host) {
-      registerHost(host);
-      auditLog("host_discovered", { host });
+      if (autoDiscoveredCount < MAX_AUTO_DISCOVERED) {
+        registerHost(host);
+        autoDiscoveredCount++;
+        auditLog("host_discovered", { host });
+      } else {
+        auditLog("host_discovery_capped", { host });
+      }
     }
 
     // Host is open (not protected) → pass through

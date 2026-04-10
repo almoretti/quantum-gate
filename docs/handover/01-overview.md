@@ -83,8 +83,8 @@ New subdomains are **auto-discovered** — the first time someone visits a new s
 
 | Role | Can do |
 |------|--------|
-| **Regular user** (@quantum.media) | View admin dashboard (read-only), access all protected services |
-| **Admin** | Toggle service protection, add/remove services, manage admins |
+| **Regular user** (@quantum.media) | Access all protected services. No admin panel access (sees "Access Denied" page with link to marketing.qih-tech.com) |
+| **Admin** | Full admin panel: view/manage services, view/manage users, toggle protection, view login history |
 | **Super Admin** | Same as admin, cannot be removed. Set via `SUPER_ADMIN` env var |
 
 ## File Structure
@@ -97,7 +97,7 @@ quantum-gate/
 │   ├── auth.ts        ← Google OAuth login/logout/callback
 │   ├── verify.ts      ← Traefik forwardAuth endpoint (the gatekeeper)
 │   ├── admin.ts       ← Admin panel API routes
-│   ├── store.ts       ← JSON file persistence (services, admins, logins)
+│   ├── store.ts       ← JSON file persistence (services, admins, users, logins)
 │   ├── security.ts    ← Headers, CSRF protection, rate limiting, audit log
 │   └── views/
 │       ├── login.ts   ← Login page HTML
@@ -107,5 +107,7 @@ quantum-gate/
 ├── Dockerfile
 ├── package.json
 ├── tsconfig.json
+├── biome.json         ← Linter/formatter config
+├── vitest.config.ts   ← Test configuration
 └── .env.example
 ```

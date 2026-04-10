@@ -31,7 +31,8 @@
 All mutation API requests (POST, PATCH, DELETE) are checked:
 1. The `Origin` header must match the `SERVER_URL`
 2. If no `Origin`, the `Referer` header is checked
-3. Mismatched origins are blocked with 403 and logged
+3. If **neither** header is present, the request is blocked (prevents CSRF via header-stripping techniques)
+4. Mismatched origins are blocked with 403 and logged
 
 This prevents malicious websites from making API calls using the user's session.
 
@@ -41,6 +42,22 @@ The Google OAuth flow uses a random state token:
 - Stored in-memory with 5-minute expiration
 - Validated on callback to prevent CSRF on the login flow
 - One-time use — deleted after validation
+
+### Redirect Validation
+After OAuth login, the redirect URL is validated before use:
+- Relative paths (`/dashboard`) are allowed
+- Protocol-relative URLs (`//evil.com`) are blocked
+- Absolute URLs must match the `SERVER_URL` hostname or the `COOKIE_DOMAIN` (including the bare domain and all subdomains)
+- External URLs, `javascript:`, and `data:` URIs are rejected — users are redirected to `/` instead
+
+### API Path Exemptions
+Certain API paths bypass Quantum Gate auth (for services with their own auth like bearer tokens). These are managed from the admin panel under **API Exemptions**. Each exemption has a host (`*` for all hosts, or a specific hostname) and a path prefix (e.g., `/api/`). By default, all `/api/` paths are exempt for backwards compatibility. Admins can tighten this per-service.
+
+### Admin Email Validation
+Only `@quantum.media` email addresses can be added as admins. This prevents accidental or malicious promotion of external accounts.
+
+### Auto-Discovery Limits
+Host auto-discovery is capped at 200 entries to prevent store flooding via crafted `X-Forwarded-Host` headers.
 
 ## HTTP Security Headers
 
@@ -77,10 +94,12 @@ Three levels:
 | Level | Who | Can do |
 |-------|-----|--------|
 | Unauthenticated | Anyone | See login page, trigger Google OAuth |
-| Authenticated | Any @quantum.media user | View admin dashboard, access all protected services |
-| Admin | Super admin + promoted admins | Toggle service protection, add/remove services and admins |
+| Authenticated | Any @quantum.media user | Access all protected services. Cannot access `/admin` or `/api/*` (gets "Access Denied" page or 403 JSON) |
+| Admin | Super admin + promoted admins | Full admin panel: manage services, users, protection toggles, view login history |
 
 The super admin (set via `SUPER_ADMIN` env var) cannot be demoted.
+
+Admin role is stored per-request on Hono's context (not a shared variable) to prevent race conditions with concurrent requests.
 
 ## Audit Logging
 
@@ -107,6 +126,9 @@ All security-relevant events are logged as JSON to stdout (captured by Docker/Co
 | `service_removed` | Admin removed a service |
 | `admin_added` | Admin promoted a user |
 | `admin_removed` | Admin demoted a user |
+| `api_exemption_added` | Admin added an API path exemption |
+| `api_exemption_removed` | Admin removed an API path exemption |
+| `host_discovery_capped` | Auto-discovery limit reached (200 hosts) |
 
 ### Viewing Logs
 
@@ -131,7 +153,7 @@ coolify app logs {quantum-gate-uuid} -n 50
 | To change admin settings | Compromise an admin's Google account |
 | To forge session cookies | Know the JWT_SECRET (64-char hex string) |
 | To bypass auth entirely | Remove the Traefik entrypoint middleware line (requires server access) |
-| To access `/api/*` paths | No auth proxy check — these paths are exempt. Backend services must implement their own auth (e.g., bearer tokens) |
+| To access exempt `/api/*` paths | These paths bypass Quantum Gate auth (managed via admin panel). Backend services must implement their own auth (e.g., bearer tokens) |
 | To access the data file | SSH access to the VPS |
 
 ## Rotating the JWT Secret

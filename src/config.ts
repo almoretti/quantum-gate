@@ -40,6 +40,8 @@ export function validateConfig() {
   }
   console.log(`[config] Server URL: ${CONFIG.SERVER_URL}`);
   console.log(`[config] Allowed domain: @${CONFIG.ALLOWED_DOMAIN}`);
-  console.log(`[config] Cookie domain: ${CONFIG.COOKIE_DOMAIN || "(localhost)"}`);
+  console.log(
+    `[config] Cookie domain: ${CONFIG.COOKIE_DOMAIN || "(localhost)"}`,
+  );
   console.log(`[config] Admin: ${CONFIG.SUPER_ADMIN}`);
 }

@@ -43,12 +43,17 @@ Clears session cookie and redirects to login page.
 
 ---
 
-## Read-Only Endpoints (Any Authenticated User)
+## Admin-Only Endpoints
 
-All require a valid `qm_session` cookie. Returns `302` redirect to login if not authenticated.
+All endpoints below require a valid `qm_session` cookie AND the user must be an admin (super admin or in the admins list).
+
+- Non-authenticated users: `302` redirect to login (HTML) or `401` JSON for `/api/*`
+- Non-admin users: styled "Access Denied" page (HTML) or `403` JSON for `/api/*`
+
+All mutation endpoints are also protected by **CSRF origin check** — requests must originate from `auth.marketing.qih-tech.com`.
 
 ### GET /admin
-Returns the admin dashboard HTML page.
+Returns the admin dashboard HTML page. Non-admins see an "Access Denied" page with a link to marketing.qih-tech.com.
 
 ### GET /api/services
 Lists all registered services.
@@ -95,13 +100,20 @@ Lists super admin and all admins.
 }
 ```
 
----
+### GET /api/users
+Lists all users who have logged in at least once.
 
-## Admin-Only Endpoints
-
-Require a valid session cookie AND the user must be an admin (super admin or in the admins list). Returns `403` if not an admin.
-
-All mutation endpoints are also protected by **CSRF origin check** — requests must originate from `auth.marketing.qih-tech.com`.
+**Response:** `200 OK`
+```json
+{
+  "user@quantum.media": {
+    "email": "user@quantum.media",
+    "name": "User Name",
+    "lastLogin": "2026-04-07T12:00:00.000Z",
+    "loginCount": 5
+  }
+}
+```
 
 ### PATCH /api/services/:host
 Toggle protection or rename a service.
@@ -153,3 +165,45 @@ Add a new admin.
 Remove an admin. Cannot remove the super admin.
 
 **Response:** `200 OK` → `{ "ok": true }` or `403` if trying to remove super admin, or `404` if not an admin.
+
+### GET /api/exemptions
+Lists all API path exemptions (paths that bypass Quantum Gate auth).
+
+**Response:** `200 OK`
+```json
+[
+  {
+    "host": "*",
+    "pathPrefix": "/api/",
+    "label": "All API paths (legacy default)",
+    "createdAt": "2026-04-10T12:00:00.000Z"
+  }
+]
+```
+
+### POST /api/exemptions
+Add an API path exemption. Host can be `*` (all hosts) or a specific hostname.
+
+**Request body (JSON):**
+```json
+{
+  "host": "coolify.marketing.qih-tech.com",
+  "pathPrefix": "/api/v1",
+  "label": "Coolify API"
+}
+```
+
+**Response:** `201 Created` → `{ "ok": true }` or `409` if already exists.
+
+### DELETE /api/exemptions
+Remove an API path exemption.
+
+**Request body (JSON):**
+```json
+{
+  "host": "*",
+  "pathPrefix": "/api/"
+}
+```
+
+**Response:** `200 OK` → `{ "ok": true }` or `404` if not found.

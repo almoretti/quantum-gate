@@ -1,14 +1,45 @@
-import { Hono } from "hono";
+import crypto from "node:crypto";
+import type { Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import { sign, verify } from "hono/jwt";
 import { CONFIG } from "./config.js";
-import { recordLogin } from "./store.js";
 import { auditLog } from "./security.js";
+import { recordLogin } from "./store.js";
 import { loginPageHtml } from "./views/login.js";
-import crypto from "node:crypto";
+
+/** Validate that a redirect URL is safe (relative path or same-origin). */
+export function isSafeRedirect(url: string): boolean {
+  if (!url) return false;
+  // Allow relative paths
+  if (url.startsWith("/")) return !url.startsWith("//");
+  // Allow same-origin URLs under the cookie domain
+  try {
+    const parsed = new URL(url);
+    const cookieDomain = CONFIG.COOKIE_DOMAIN; // e.g. ".marketing.qih-tech.com"
+    const serverHost = new URL(CONFIG.SERVER_URL).hostname;
+    if (parsed.hostname === serverHost) return true;
+    if (cookieDomain) {
+      // ".marketing.qih-tech.com" → match subdomains AND the bare domain itself
+      const bare = cookieDomain.startsWith(".")
+        ? cookieDomain.slice(1)
+        : cookieDomain;
+      if (
+        parsed.hostname === bare ||
+        parsed.hostname.endsWith(cookieDomain)
+      )
+        return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
 
 // CSRF state storage (short-lived, in-memory)
-const pendingStates = new Map<string, { redirect: string; expiresAt: number }>();
+const pendingStates = new Map<
+  string,
+  { redirect: string; expiresAt: number }
+>();
 
 setInterval(() => {
   const now = Date.now();
@@ -18,7 +49,6 @@ setInterval(() => {
 }, 60_000);
 
 export function setupAuthRoutes(app: Hono) {
-
   // Login page
   app.get("/auth/login", (c) => {
     const redirect = c.req.query("redirect") || "";
@@ -81,24 +111,32 @@ export function setupAuthRoutes(app: Hono) {
         return c.text("Google token exchange failed", 502);
       }
 
-      const tokenData = await tokenRes.json() as { access_token: string };
+      const tokenData = (await tokenRes.json()) as { access_token: string };
 
       // Fetch user info
-      const userRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
-        headers: { Authorization: `Bearer ${tokenData.access_token}` },
-      });
+      const userRes = await fetch(
+        "https://www.googleapis.com/oauth2/v2/userinfo",
+        {
+          headers: { Authorization: `Bearer ${tokenData.access_token}` },
+        },
+      );
 
       if (!userRes.ok) {
         auditLog("auth_userinfo_failed", { status: userRes.status });
         return c.text("Failed to fetch user info", 502);
       }
 
-      const user = await userRes.json() as { email: string; name: string; picture?: string };
+      const user = (await userRes.json()) as {
+        email: string;
+        name: string;
+        picture?: string;
+      };
 
       // Domain enforcement
       if (!user.email.endsWith(`@${CONFIG.ALLOWED_DOMAIN}`)) {
         auditLog("auth_domain_rejected", { email: user.email });
-        return c.html(`
+        return c.html(
+          `
           <html><body style="font-family:Inter,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;background:#f8fafe;">
             <div style="text-align:center;padding:40px;background:white;border-radius:16px;box-shadow:0 8px 32px rgba(0,0,0,0.08);">
               <h2 style="color:#3d4449;">Access Denied</h2>
@@ -106,18 +144,26 @@ export function setupAuthRoutes(app: Hono) {
               <a href="/auth/login" style="color:#0086ff;">Try again</a>
             </div>
           </body></html>
-        `, 403);
+        `,
+          403,
+        );
       }
 
       // Record login
-      const ip = c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+      const ip =
+        c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
       recordLogin(user.email, user.name, ip);
 
       // Sign JWT session cookie
       const now = Math.floor(Date.now() / 1000);
       const token = await sign(
-        { email: user.email, name: user.name, iat: now, exp: now + CONFIG.COOKIE_MAX_AGE },
-        CONFIG.JWT_SECRET
+        {
+          email: user.email,
+          name: user.name,
+          iat: now,
+          exp: now + CONFIG.COOKIE_MAX_AGE,
+        },
+        CONFIG.JWT_SECRET,
       );
 
       // Set cookie
@@ -134,37 +180,46 @@ export function setupAuthRoutes(app: Hono) {
 
       auditLog("auth_success", { email: user.email });
 
-      // Redirect to original URL or default
-      const redirectTo = pending.redirect || (
-        user.email === CONFIG.SUPER_ADMIN ? "/admin" : CONFIG.SERVER_URL
-      );
+      // Redirect to original URL (validated) or default
+      const fallback = user.email === CONFIG.SUPER_ADMIN ? "/admin" : "/";
+      const redirectTo =
+        pending.redirect && isSafeRedirect(pending.redirect)
+          ? pending.redirect
+          : fallback;
 
       return c.redirect(redirectTo);
-
     } catch (err) {
       auditLog("auth_callback_error", { error: String(err) });
       return c.text("Authentication failed", 500);
     }
   });
 
-  // Logout
+  // Logout — cookie flags must match the original for browsers to clear it
   app.get("/auth/logout", (c) => {
     const cookieOpts: Parameters<typeof setCookie>[3] = {
       path: "/",
+      httpOnly: true,
+      sameSite: "Lax",
       maxAge: 0,
     };
     if (CONFIG.COOKIE_DOMAIN) cookieOpts.domain = CONFIG.COOKIE_DOMAIN;
+    if (CONFIG.isSecure) cookieOpts.secure = true;
     setCookie(c, CONFIG.COOKIE_NAME, "", cookieOpts);
     return c.redirect("/auth/login");
   });
 }
 
 // Shared helper: parse and verify the session cookie
-export async function parseSession(c: { req: { raw: Request } } & any): Promise<{ email: string; name: string } | null> {
+export async function parseSession(
+  c: { req: { raw: Request } } & any,
+): Promise<{ email: string; name: string } | null> {
   const token = getCookie(c, CONFIG.COOKIE_NAME);
   if (!token) return null;
   try {
-    const payload = await verify(token, CONFIG.JWT_SECRET, "HS256") as { email: string; name: string };
+    const payload = (await verify(token, CONFIG.JWT_SECRET, "HS256")) as {
+      email: string;
+      name: string;
+    };
     return payload;
   } catch {
     return null;
