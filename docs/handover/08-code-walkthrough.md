@@ -58,7 +58,9 @@ The `AUTH_HOST` constant is extracted from `SERVER_URL` at module load time. Thi
 
 **API path exemptions:** Instead of a hardcoded `/api/` bypass, exemptions are now managed via the admin panel and stored in `apiExemptions`. Each exemption has a `host` (or `*` for all) and a `pathPrefix`. The `isApiExempt(host, uri)` function checks at runtime. By default, all `/api/` paths are exempt for backwards compatibility.
 
-Auto-discovery: when an unknown host is seen, `registerHost()` adds it to the store with `protected: true`. This triggers a disk write (JSON persistence) but only once per new hostname. Auto-discovery is capped at 200 to prevent store flooding via crafted headers.
+**Host normalisation:** The `normaliseHost()` function strips `www.` prefixes so `www.cake.marketing.qih-tech.com` becomes `cake.marketing.qih-tech.com`. The `isOwnDomain()` function validates the host against `COOKIE_DOMAIN` (or `SERVER_URL` hostname as fallback) — foreign domains like `www.google-analytics.com` are rejected with 403 and never registered.
+
+Auto-discovery: when an unknown own-domain host is seen, `registerHost()` adds it to the store with `protected: true`. This triggers a disk write (JSON persistence) but only once per new hostname. Auto-discovery is capped at 200.
 
 ## Admin: `src/admin.ts`
 

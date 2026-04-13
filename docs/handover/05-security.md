@@ -56,8 +56,10 @@ Certain API paths bypass Quantum Gate auth (for services with their own auth lik
 ### Admin Email Validation
 Only `@quantum.media` email addresses can be added as admins. This prevents accidental or malicious promotion of external accounts.
 
-### Auto-Discovery Limits
-Host auto-discovery is capped at 200 entries to prevent store flooding via crafted `X-Forwarded-Host` headers.
+### Host Auto-Discovery
+- Only hosts under `*.marketing.qih-tech.com` are auto-discovered. Foreign domains (e.g., `www.google-analytics.com`) are rejected with 403.
+- `www.` prefixes are stripped automatically — `www.cake.marketing.qih-tech.com` resolves to `cake.marketing.qih-tech.com` (no duplicates).
+- Capped at 200 auto-discovered entries to prevent store flooding via crafted `X-Forwarded-Host` headers.
 
 ## HTTP Security Headers
 

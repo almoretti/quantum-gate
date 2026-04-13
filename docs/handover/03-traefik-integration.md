@@ -73,12 +73,15 @@ When a request comes in:
      X-Forwarded-URI: /workflows
      Cookie: qm_session=eyJ... (if user has one)
 4. Quantum Gate /verify logic:
-   a. Is host "auth.marketing.qih-tech.com"? → 200 OK (bypass)
-   b. Is this host+path in the API exemptions list? → 200 OK (managed via admin panel)
-   c. Is host registered as "open"? → 200 OK (no auth needed)
-   d. Is host unknown? → Register as protected (up to 200 auto-discoveries), continue to step e
-   e. Is qm_session cookie valid? → 200 OK + X-Auth-User header
-   f. No valid cookie? → 302 redirect to login page
+   a. Strip www. prefix (www.cake.* → cake.*) and lowercase the host
+   b. Is host "auth.marketing.qih-tech.com"? → 200 OK (bypass)
+   c. Is this host+path in the API exemptions list? → 200 OK (managed via admin panel)
+   d. Is host registered as "open"? → 200 OK (no auth needed)
+   e. Is host unknown?
+      - Not under *.marketing.qih-tech.com? → 403 Forbidden (foreign domain rejected)
+      - Under our domain? → Register as protected (up to 200 auto-discoveries), continue to step f
+   f. Is qm_session cookie valid? → 200 OK + X-Auth-User header
+   g. No valid cookie? → 302 redirect to login page
 5. Traefik acts on response:
    - 200 → Forward request to backend service
    - 302 → Send redirect to browser
