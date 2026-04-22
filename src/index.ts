@@ -6,6 +6,7 @@ import { CONFIG, validateConfig } from "./config.js";
 import { setupMcpTokenRoutes } from "./mcp-token.js";
 import { setupOAuthRoutes, startCodeCleanup } from "./oauth.js";
 import { setupOAuthMetadataRoute } from "./oauth-metadata.js";
+import { setupOAuthRegisterRoute } from "./oauth-register.js";
 import {
   auditLog,
   originCheck,
@@ -35,9 +36,10 @@ app.use("/auth/*", rateLimit(30, 60_000));
 setupAuthRoutes(app);
 setupMcpTokenRoutes(app);
 
-// OAuth 2.1 authorize + token endpoints (rate-limited)
+// OAuth 2.1 authorize + token + DCR endpoints (rate-limited)
 app.use("/oauth/*", rateLimit(60, 60_000));
 setupOAuthRoutes(app);
+setupOAuthRegisterRoute(app);
 startCodeCleanup();
 
 // Admin routes (rate-limited + CSRF protection)

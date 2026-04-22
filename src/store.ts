@@ -358,6 +358,15 @@ export function getOAuthClients(): Record<string, OAuthClient> {
 }
 
 /**
+ * Persist a dynamically registered OAuth client (RFC 7591). Overwrites any
+ * existing entry with the same client_id.
+ */
+export function registerOAuthClient(client: OAuthClient): void {
+  data.oauthClients[client.client_id] = client;
+  persist();
+}
+
+/**
  * Check if a given redirect URI is permitted for a pre-registered client.
  *
  * Two supported pattern forms:
