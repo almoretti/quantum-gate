@@ -22,6 +22,20 @@ const app = new Hono();
 // Global middleware
 app.use("*", securityHeaders);
 
+// Temporary diagnostic: log every OAuth / well-known hit with method + UA so
+// we can trace Claude's exact discovery flow during the Custom Connector
+// onboarding. Remove once the flow is debugged.
+app.use("*", async (c, next) => {
+  const p = c.req.path;
+  if (p.startsWith("/oauth/") || p.startsWith("/.well-known/") || p === "/auth/login" || p === "/auth/callback") {
+    const ua = c.req.header("user-agent") || "-";
+    console.log(
+      `[oauth-trace] ${c.req.method} ${p}${c.req.url.includes("?") ? "?" + c.req.url.split("?")[1].slice(0, 120) : ""} ua="${ua.slice(0, 60)}"`,
+    );
+  }
+  await next();
+});
+
 // Health check (always public)
 app.get("/health", (c) => c.json({ status: "ok", service: "quantum-gate" }));
 
