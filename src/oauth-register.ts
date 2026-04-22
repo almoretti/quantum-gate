@@ -26,6 +26,17 @@ import type { OAuthClient } from "./store.js";
  */
 export function setupOAuthRegisterRoute(app: Hono) {
   app.post("/oauth/register", async (c) => {
+    const ct = c.req.header("content-type") || "(none)";
+    let raw = "";
+    try {
+      raw = await c.req.text();
+    } catch {
+      // leave empty
+    }
+    console.log(
+      `[oauth-register-debug] content-type="${ct}" body_len=${raw.length} body_preview=${JSON.stringify(raw.slice(0, 400))}`,
+    );
+
     let body: {
       client_name?: string;
       redirect_uris?: string[];
@@ -36,8 +47,11 @@ export function setupOAuthRegisterRoute(app: Hono) {
     };
 
     try {
-      body = await c.req.json();
+      body = JSON.parse(raw);
     } catch {
+      console.log(
+        `[oauth-register-debug] JSON.parse failed — rejecting with invalid_request`,
+      );
       return c.json(
         { error: "invalid_request", error_description: "Invalid JSON body" },
         400,
