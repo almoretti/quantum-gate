@@ -59,6 +59,25 @@ const DEFAULT_EXEMPTIONS: ApiExemption[] = [
 ];
 
 /**
+ * Exemptions QG MUST have on every boot, even if the admin-managed list was
+ * already seeded from a previous deploy. These cover endpoints on downstream
+ * services that handle their own authentication (MCP bearer tokens) or that
+ * must remain publicly readable for OAuth 2.0 client discovery.
+ */
+const REQUIRED_EXEMPTIONS: Omit<ApiExemption, "createdAt">[] = [
+  {
+    host: "analytics-mcp.marketing.qih-tech.com",
+    pathPrefix: "/mcp",
+    label: "Analytics MCP — bearer-authenticated endpoint",
+  },
+  {
+    host: "analytics-mcp.marketing.qih-tech.com",
+    pathPrefix: "/.well-known/",
+    label: "Analytics MCP — OAuth resource discovery",
+  },
+];
+
+/**
  * Pre-registered OAuth 2.1 clients. Seeded on first boot when
  * `oauthClients` is empty. Admins can hand-edit services.json to add more.
  * Wildcard redirect matching: each URI supports a single `*` wildcard for
@@ -126,6 +145,18 @@ function load() {
   if (Object.keys(data.oauthClients).length === 0) {
     data.oauthClients = { ...DEFAULT_OAUTH_CLIENTS };
     seeded = true;
+  }
+  // Always-present exemptions for known MCP servers whose /mcp endpoint does
+  // its own bearer auth (and /.well-known/* must be publicly readable for
+  // OAuth 2.0 client discovery). Idempotent — skipped if already present.
+  for (const ex of REQUIRED_EXEMPTIONS) {
+    const exists = data.apiExemptions.some(
+      (e) => e.host === ex.host && e.pathPrefix === ex.pathPrefix,
+    );
+    if (!exists) {
+      data.apiExemptions.push({ ...ex, createdAt: new Date().toISOString() });
+      seeded = true;
+    }
   }
   if (seeded) persist();
 }
