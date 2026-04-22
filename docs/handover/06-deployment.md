@@ -5,7 +5,7 @@
 - **Server**: Coolify instance at `34.105.154.219` (Google Cloud)
 - **Coolify project**: "Authelia" (legacy name from earlier setup)
 - **Application type**: Dockerfile build from GitHub repo
-- **GitHub repo**: https://github.com/almoretti/quantum-gate
+- **GitHub repo**: https://github.com/digitaladv/qih-martech-marketing-gate (canonical; redirects from the old `almoretti/quantum-gate` still work)
 - **Branch**: `main`
 
 ## How Deployment Works
@@ -45,6 +45,26 @@ Contains: `services.json` (services, admins, users, login history)
 ### Environment Variables
 
 See [02-configuration.md](./02-configuration.md) for the full list.
+
+Pre-deploy checklist:
+- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `JWT_SECRET` (required)
+- `SERVER_URL=https://auth.marketing.qih-tech.com`, `COOKIE_DOMAIN=.marketing.qih-tech.com`, `NODE_ENV=production`
+- `MCP_SERVER_URL` — set to the downstream MCP URL (default `https://analytics-mcp.marketing.qih-tech.com/mcp`)
+- `SUPER_ADMIN`, `ALLOWED_DOMAIN` (optional but usually set)
+
+### Shared JWT_SECRET Coordination
+
+`JWT_SECRET` is used for **two** purposes:
+1. Signing the `qm_session` cookie
+2. Signing MCP Bearer tokens issued by `/oauth/token` and `/auth/mcp-token`
+
+The analytics MCP deployment at `https://analytics-mcp.marketing.qih-tech.com` verifies incoming Bearer tokens with the **same** secret. Any future MCP service that accepts QG-issued tokens must receive the same `JWT_SECRET`.
+
+Consequences:
+- Rotate `JWT_SECRET` → rotate it in QG's Coolify env AND in every downstream MCP service at the same time
+- Keep the two in sync or MCP calls will fail with `invalid token` / 401
+
+Upgrade path to asymmetric signing (RS256 + JWKS) is tracked in `05-security.md`.
 
 ## Redeploying
 

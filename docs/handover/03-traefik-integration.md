@@ -103,6 +103,16 @@ When a request comes in:
 
 **To re-enable**: Add the line back and restart the proxy.
 
+## OAuth 2.1 / MCP Bridge Endpoints
+
+`/.well-known/oauth-authorization-server`, `/oauth/authorize`, `/oauth/token`, and `/auth/mcp-token` are **regular Hono routes served by Quantum Gate itself** — they are NOT protected by the Traefik ForwardAuth middleware (Traefik only calls `/verify`, which is a different route).
+
+Incoming requests to these endpoints hit `auth.marketing.qih-tech.com` directly:
+- `/.well-known/oauth-authorization-server` and `/oauth/*` are public (PKCE + state is the CSRF barrier for `/oauth/authorize`; PKCE verifier is the barrier for `/oauth/token`)
+- `/auth/mcp-token` (GET + POST) requires a valid `qm_session` cookie — so Traefik's ForwardAuth bypass for `auth.marketing.qih-tech.com` does not apply to it; the route enforces the session check in-process
+
+**Downstream MCP** (`analytics-mcp.marketing.qih-tech.com`) also passes through Traefik, but its `/mcp` and `/.well-known/` paths are listed in `REQUIRED_EXEMPTIONS` (see `src/store.ts`) so ForwardAuth returns 200 without a `qm_session`. The MCP server then does its own Bearer-token verification.
+
 ## Adding Auth to a New Service
 
 No action needed. When you deploy a new service on `*.marketing.qih-tech.com` via Coolify, Quantum Gate automatically:

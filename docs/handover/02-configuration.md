@@ -10,7 +10,7 @@ All configuration is done through environment variables. These are set in **Cool
 |----------|---------|-------------|
 | `GOOGLE_CLIENT_ID` | `134682421362-xxx.apps.googleusercontent.com` | Google OAuth client ID. From Google Cloud Console → APIs & Services → Credentials |
 | `GOOGLE_CLIENT_SECRET` | `GOCSPX-xxx` | Google OAuth client secret. Same location as above |
-| `JWT_SECRET` | `e6f525dc271158f2...` | Random string used to sign session cookies. Must be at least 32 characters. Generate with: `openssl rand -hex 32` |
+| `JWT_SECRET` | `e6f525dc271158f2...` | Random string used to sign session cookies AND MCP/OAuth Bearer tokens (HS256). Must be at least 32 characters. Generate with: `openssl rand -hex 32`. **This secret is shared with every downstream MCP consumer** (currently `analytics-mcp.marketing.qih-tech.com`) — rotating it invalidates active MCP tokens as well as `qm_session` cookies. See `05-security.md` for the RS256/JWKS upgrade path. |
 
 ### Optional Variables (with defaults)
 
@@ -23,6 +23,7 @@ All configuration is done through environment variables. These are set in **Cool
 | `COOKIE_DOMAIN` | _(empty)_ | Domain scope for the session cookie. In production: `.marketing.qih-tech.com` (note the leading dot — this shares the cookie across all subdomains) |
 | `COOKIE_NAME` | `qm_session` | Name of the session cookie |
 | `SUPER_ADMIN` | `alessandro.moretti@quantum.media` | Email of the super admin. This user always has admin access and cannot be removed |
+| `MCP_SERVER_URL` | `https://analytics-mcp.marketing.qih-tech.com/mcp` | Public URL of the downstream MCP server. Baked into the `/auth/mcp-token` bridge page's pre-filled `claude_desktop_config.json` snippet and returned in the `POST /auth/mcp-token` JSON response. Change if the MCP server is moved or renamed. |
 
 ### How to Change the Super Admin
 
@@ -39,8 +40,8 @@ openssl rand -hex 32
 ```
 
 1. Copy the output
-2. Update `JWT_SECRET` in Coolify environment variables
-3. Redeploy — all existing sessions will be invalidated (users need to re-login)
+2. Update `JWT_SECRET` in Coolify environment variables **and in every downstream MCP service** (currently just `analytics-mcp`) — they must stay in sync
+3. Redeploy both — all existing sessions AND all active MCP Bearer tokens are invalidated. Users re-login via Google; Claude clients re-run the OAuth flow
 
 ## Google OAuth Setup
 
@@ -101,6 +102,8 @@ All runtime data is stored in `/app/data/services.json` inside the container. Th
 - **Admins**: list of admin email addresses
 - **Users**: all users who have logged in (email, name, last login, login count)
 - **Recent logins**: last 100 login events (email, name, IP, timestamp)
+- **API exemptions**: `host` + `pathPrefix` pairs that bypass `/verify` (admin-managed + `REQUIRED_EXEMPTIONS` re-applied on every boot)
+- **OAuth clients**: pre-registered OAuth 2.1 clients (`claude-desktop`, `claude-code`, `claude-web`) with allowed redirect URIs. Seeded from `DEFAULT_OAUTH_CLIENTS` on first boot; hand-edit `services.json` to add more
 
 ### Volume Setup in Coolify
 A **named volume** is required — without it, data is lost on container restart.

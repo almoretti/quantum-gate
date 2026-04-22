@@ -112,6 +112,65 @@ app.use("/auth/*", rateLimit(30, 60_000));  // Change 30 to higher number
 
 ---
 
+## OAuth 2.1 / MCP Bearer Token Issues
+
+### `POST /oauth/token` returns `{ "error": "invalid_grant" }`
+
+The error body is intentionally generic. The specific reason is in QG's logs under `oauth_code_rejected`:
+
+| Internal reason | Meaning | Fix |
+|-----------------|---------|-----|
+| `unknown_code` | Code not in the in-memory map. Either typo, process restart, or never issued | Re-run `/oauth/authorize` |
+| `already_used` | Code was already exchanged (replay attempt or client retry) | Codes are single-use — restart the flow |
+| `expired` | Code older than 60 s | Client took too long between authorize + token. Restart the flow |
+| `client_mismatch` | `client_id` in token call ≠ the one that requested the code | Pass the same `client_id` in both calls |
+| `redirect_mismatch` | `redirect_uri` in token call ≠ the one that requested the code | Must be byte-identical |
+| `pkce_mismatch` | `sha256(code_verifier) ≠ code_challenge` | Client bug — verifier and challenge must be from the same pair |
+
+Check with: `coolify app logs {uuid} -n 200 | grep oauth_code_rejected`
+
+---
+
+### `GET /oauth/authorize` returns `400 invalid_request: redirect_uri not whitelisted`
+
+The `redirect_uri` doesn't match any entry for the client in `DEFAULT_OAUTH_CLIENTS` / `services.json`.
+
+- Check `client_id` is one of `claude-desktop`, `claude-code`, `claude-web`
+- Check the URI's scheme + host match a pattern (wildcards allowed in host only when pattern has `*`)
+- For localhost: pattern has no port, so any port matches — but scheme (`http://` vs `https://`) must match exactly
+- Query string is part of the match — a URI with an unexpected `?foo=bar` will fail unless the pattern ends in `/*`
+
+Audit log: `oauth_redirect_uri_rejected` with the attempted URI.
+
+---
+
+### MCP Server Returns 401 "token expired" but Clock Looks Fine
+
+JWT `exp` is in seconds since epoch. If QG and the MCP server drift by more than a few seconds, tokens can appear expired at the edge of their 24 h lifetime. Check system time on both containers:
+```bash
+docker exec <quantum-gate> date
+docker exec <analytics-mcp> date
+```
+Restart the container(s) with drifted clocks so NTP re-syncs.
+
+---
+
+### MCP Server Returns 401 "wrong audience"
+
+Tokens are issued with `aud: "mcp-analytics"`. If the MCP server expects a different audience, it rejects the token.
+
+- Verify `MCP_TOKEN_AUDIENCE` in `src/mcp-token.ts` (currently `"mcp-analytics"`)
+- Verify the MCP server's expected audience matches
+- If you add a second MCP consumer with a different audience, switch signing scheme (RS256 + audience-per-service) rather than changing this constant
+
+---
+
+### MCP Server Returns 401 "invalid signature"
+
+`JWT_SECRET` on QG ≠ `JWT_SECRET` on the MCP server. Re-sync the env var in both Coolify apps and redeploy.
+
+---
+
 ## Log Messages Reference
 
 Check logs in Coolify → Quantum Gate → Logs.
@@ -127,6 +186,11 @@ Check logs in Coolify → Quantum Gate → Logs.
 | `csrf_blocked` | Cross-origin API request blocked | Possible attack or misconfigured client. Investigate. |
 | `service_protection_changed` | Admin toggled protection | Audit — check who and why |
 | `admin_added` / `admin_removed` | Admin role change | Audit — verify this was intentional |
+| `oauth_code_issued` | OAuth code minted at `/oauth/authorize` | No — informational |
+| `oauth_code_rejected` | OAuth code rejected at `/oauth/token` | See OAuth section above for the reason map |
+| `oauth_token_issued` | OAuth access token issued | No — informational |
+| `oauth_redirect_uri_rejected` | redirect_uri not whitelisted for the client | Check client registration; could be a misconfigured client |
+| `mcp_token_issued` | MCP bridge token issued via `/auth/mcp-token` | No — informational |
 
 ## Getting Help
 

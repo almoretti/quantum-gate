@@ -2,6 +2,8 @@
 
 This documentation is for the development team to understand, maintain, fix, and extend Quantum Gate.
 
+Quantum Gate is both a **Google-OAuth consumer** (issues `qm_session` cookies, acts as Traefik ForwardAuth for `*.marketing.qih-tech.com`) and an **OAuth 2.1 authorization server** (issues Bearer tokens to Claude Desktop / Claude.ai / Claude Code for downstream MCP servers).
+
 ## Documents
 
 | # | Document | Who should read | Covers |
@@ -20,7 +22,11 @@ This documentation is for the development team to understand, maintain, fix, and
 - **Login page**: https://auth.marketing.qih-tech.com/auth/login
 - **Admin panel**: https://auth.marketing.qih-tech.com/admin
 - **Health check**: https://auth.marketing.qih-tech.com/health
-- **GitHub repo**: https://github.com/almoretti/quantum-gate
+- **OAuth metadata**: https://auth.marketing.qih-tech.com/.well-known/oauth-authorization-server
+- **OAuth authorize**: https://auth.marketing.qih-tech.com/oauth/authorize
+- **OAuth token**: https://auth.marketing.qih-tech.com/oauth/token
+- **MCP token bridge page** (CLI users): https://auth.marketing.qih-tech.com/auth/mcp-token
+- **GitHub repo**: https://github.com/digitaladv/qih-martech-marketing-gate
 - **Coolify**: http://34.105.154.219:8000
 - **Super admin**: Set via `SUPER_ADMIN` env var in Coolify
 

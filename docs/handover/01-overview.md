@@ -4,6 +4,12 @@
 
 Quantum Gate is a lightweight authentication gateway that protects all internal services running on `*.marketing.qih-tech.com`. It sits between the internet and your services, requiring users to sign in with their Google Workspace account before accessing any tool.
 
+It plays **three distinct roles**:
+
+1. **Google-OAuth consumer** — authenticates users against `@quantum.media` Google Workspace, issues a `qm_session` cookie.
+2. **Traefik ForwardAuth provider** — `/verify` endpoint called on every HTTPS request to decide 200 / 302 / 403.
+3. **OAuth 2.1 authorization server** — issues short-lived Bearer JWTs to Claude Desktop / Claude.ai / Claude Code so they can call downstream MCP servers (e.g. `analytics-mcp.marketing.qih-tech.com`). PKCE-S256 only, code flow only, public clients only.
+
 ## How It Works (Simple Version)
 
 ```
@@ -35,7 +41,7 @@ User is redirected back to n8n — Traefik lets them through
 | **Tech stack** | Hono (Node.js), TypeScript |
 | **Database** | None — uses a JSON file |
 | **Deployed via** | Coolify (Dockerfile build from GitHub) |
-| **GitHub repo** | https://github.com/almoretti/quantum-gate |
+| **GitHub repo** | https://github.com/digitaladv/qih-martech-marketing-gate |
 
 ## What It Protects
 
@@ -79,6 +85,31 @@ New subdomains are **auto-discovered** — the first time someone visits a new s
                           └────────────────┘
 ```
 
+### OAuth 2.1 flow (separate from ForwardAuth)
+
+```
+  Claude Desktop / Claude.ai / Claude Code
+             │
+             │ 1. GET /.well-known/oauth-authorization-server
+             ▼
+  ┌──────────────────────┐
+  │   Quantum Gate       │
+  │   OAuth Authz Server │
+  └──────────┬───────────┘
+             │ 2. GET /oauth/authorize (PKCE-S256, state)
+             │    → if no qm_session: 302 to /auth/login → Google SSO
+             │    → if session:       302 redirect_uri?code=...&state=...
+             ▼
+  Client exchanges code + verifier:
+             │ 3. POST /oauth/token
+             ▼
+  Claude receives access_token (JWT, HS256, 24h, aud=mcp-analytics)
+             │
+             │ 4. Authorization: Bearer <token>
+             ▼
+  analytics-mcp.marketing.qih-tech.com/mcp (verifies JWT locally)
+```
+
 ## Roles
 
 | Role | Can do |
@@ -92,16 +123,20 @@ New subdomains are **auto-discovered** — the first time someone visits a new s
 ```
 quantum-gate/
 ├── src/
-│   ├── index.ts       ← App entry point, wires everything together
-│   ├── config.ts      ← Environment variables and validation
-│   ├── auth.ts        ← Google OAuth login/logout/callback
-│   ├── verify.ts      ← Traefik forwardAuth endpoint (the gatekeeper)
-│   ├── admin.ts       ← Admin panel API routes
-│   ├── store.ts       ← JSON file persistence (services, admins, users, logins)
-│   ├── security.ts    ← Headers, CSRF protection, rate limiting, audit log
+│   ├── index.ts              ← App entry point, wires everything together
+│   ├── config.ts             ← Environment variables and validation
+│   ├── auth.ts               ← Google OAuth login/logout/callback
+│   ├── verify.ts             ← Traefik forwardAuth endpoint (the gatekeeper)
+│   ├── admin.ts              ← Admin panel API routes
+│   ├── store.ts              ← JSON file persistence (services, admins, users, logins, OAuth clients)
+│   ├── security.ts           ← Headers, CSRF protection, rate limiting, audit log
+│   ├── oauth.ts              ← OAuth 2.1 authorize + token endpoints
+│   ├── oauth-metadata.ts     ← RFC 8414 /.well-known/oauth-authorization-server
+│   ├── mcp-token.ts          ← Cookie-gated MCP bridge token (CLI path)
 │   └── views/
-│       ├── login.ts   ← Login page HTML
-│       └── admin.ts   ← Admin dashboard HTML
+│       ├── login.ts          ← Login page HTML
+│       ├── admin.ts          ← Admin dashboard HTML
+│       └── mcp-token.ts      ← MCP bridge copy-paste page HTML
 ├── data/
 │   └── services.json  ← Runtime data (auto-created, persisted across deploys)
 ├── Dockerfile

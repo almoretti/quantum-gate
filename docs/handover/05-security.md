@@ -61,6 +61,58 @@ Only `@quantum.media` email addresses can be added as admins. This prevents acci
 - `www.` prefixes are stripped automatically — `www.cake.marketing.qih-tech.com` resolves to `cake.marketing.qih-tech.com` (no duplicates).
 - Capped at 200 auto-discovered entries to prevent store flooding via crafted `X-Forwarded-Host` headers.
 
+## OAuth 2.1 Provider Security
+
+QG acts as an OAuth 2.1 authorization server for downstream MCP consumers. Hardening is defensive-by-default.
+
+### PKCE (mandatory, S256 only)
+- `code_challenge_method=S256` is the only accepted method — `plain` is rejected at `/oauth/authorize`
+- PKCE verifier is checked at `/oauth/token` with `crypto.timingSafeEqual` (constant-time compare) — prevents verifier-probing via response-time analysis
+- S256 is RFC 7636: `challenge = base64url(sha256(verifier))`, no padding
+
+### Single-Use Authorization Codes
+- 32 random bytes, base64url-encoded (`crypto.randomBytes(32)`)
+- TTL = 60 seconds (`AUTH_CODE_TTL_SECONDS` in `src/oauth.ts`)
+- Marked `used = true` **before** the token is signed — even if signing throws, the code cannot be replayed
+- In-memory Map, swept every 30 s by `sweepExpiredCodes()`. Single QG replica, so no shared store needed
+
+### Generic `invalid_grant` on `/oauth/token`
+All failure reasons (unknown code, already used, expired, client_id mismatch, redirect_uri mismatch, PKCE mismatch) return the same `invalid_grant` / `"code is invalid or expired"` body. The specific reason is emitted to the audit log (`oauth_code_rejected`) but never to the caller.
+
+### State / CSRF on the Authorize Endpoint
+- `state` parameter is required and must be non-empty. QG treats it as opaque and echoes it back verbatim in the success redirect
+- Missing `state` returns `400` without redirect (avoids bouncing the user to an unvetted URL)
+
+### Pre-registered Public Clients
+- No dynamic client registration. Clients are seeded in `DEFAULT_OAUTH_CLIENTS` (`src/store.ts`): `claude-desktop`, `claude-code`, `claude-web`
+- No client secret (`token_endpoint_auth_methods_supported=["none"]`) — PKCE is the replacement for client authentication per OAuth 2.1
+
+### Wildcard Redirect URI Matching
+Implemented by `isRedirectUriAllowed()` in `src/store.ts`:
+- Scheme + hostname must match exactly (host allows a single `*` wildcard for Claude.ai's per-org callback path)
+- If the pattern has no port, any candidate port is accepted — supports Claude Desktop / Claude Code binding ephemeral localhost ports
+- Path + search + hash compared together with `*` -> `.+` regex. **Query string is part of the match** — prevents `?next=//evil.com`-style injection
+
+### Error Handling Before vs After `redirect_uri` is Trusted
+- Errors detected BEFORE `redirect_uri` is validated (missing client_id, unknown client_id, missing/invalid redirect_uri) return `400` plain text — never bounce the user to an unvetted URL
+- Errors AFTER (missing state, bad PKCE method, unsupported response_type) also return `400` rather than redirecting, to reduce open-redirector exposure
+
+### Token Signing — Shared HS256 (Current Limitation)
+- Access tokens are signed HS256 with `JWT_SECRET`
+- The downstream MCP server (`analytics-mcp`) verifies against the same secret — this is a **shared-secret bridge**, not public-key verification
+- Consequence: anyone with read access to QG's env vars can forge MCP tokens. Acceptable while there is a single MCP consumer under the same deployment umbrella
+- **Upgrade path when a second MCP consumer appears**: switch signing to RS256, expose a JWKS endpoint at `/.well-known/jwks.json`, have consumers verify via public key. Metadata document at `/.well-known/oauth-authorization-server` would then advertise `jwks_uri`
+
+### REQUIRED_EXEMPTIONS on Every Boot
+`src/store.ts` defines `REQUIRED_EXEMPTIONS` — applied to `apiExemptions` on every startup (idempotent). Covers downstream paths that must bypass QG's ForwardAuth:
+
+| Host | Path prefix | Why |
+|------|-------------|-----|
+| `analytics-mcp.marketing.qih-tech.com` | `/mcp` | MCP server enforces its own Bearer auth |
+| `analytics-mcp.marketing.qih-tech.com` | `/.well-known/` | OAuth protected-resource discovery must be publicly fetchable |
+
+`DEFAULT_EXEMPTIONS` is only seeded when the list is empty — already-deployed instances would never pick up new entries added after their first boot. `REQUIRED_EXEMPTIONS` plugs this gap: any missing required entry is inserted on startup.
+
 ## HTTP Security Headers
 
 Applied to every response:
@@ -131,6 +183,11 @@ All security-relevant events are logged as JSON to stdout (captured by Docker/Co
 | `api_exemption_added` | Admin added an API path exemption |
 | `api_exemption_removed` | Admin removed an API path exemption |
 | `host_discovery_capped` | Auto-discovery limit reached (200 hosts) |
+| `oauth_redirect_uri_rejected` | `/oauth/authorize` called with redirect_uri not whitelisted for the client |
+| `oauth_code_issued` | `/oauth/authorize` minted an authorization code |
+| `oauth_code_rejected` | `/oauth/token` rejected a code (includes internal reason: unknown/used/expired/client_mismatch/redirect_mismatch/pkce_mismatch) |
+| `oauth_token_issued` | `/oauth/token` returned an access token |
+| `mcp_token_issued` | `/auth/mcp-token` bridge issued a token |
 
 ### Viewing Logs
 
